@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Chosen Palette: Warm Neutral with Teal Accent -->
+    <!-- Application Structure Plan: A task-oriented single-page application designed as an interactive calculator. The flow guides the user logically from selecting a data template or uploading their own, to inputting/adjusting parameters, and finally to calculating results and performing an optional, in-depth sensitivity analysis in a modal view. This structure is chosen over a report-style layout to prioritize user action and direct interaction, making the tool practical and goal-oriented. The sensitivity analysis is modal to provide a focused deep-dive experience without cluttering the main interface. -->
+    <!-- Visualization & Content Choices: Key Result (LCOS): Presented as a prominent number for immediate clarity. Cost Breakdown: Simple text list with percentages for easy scanning. Sensitivity Analysis: An interactive horizontal bar chart (via Chart.js on Canvas) is used to compare the relative impact of different variables. A bar chart is optimal for comparing magnitudes, and making it horizontal improves readability of parameter labels. Bar colors (red/blue) instantly communicate the positive/negative correlation, enhancing understanding. This replaces a static display for better user engagement and data clarity, fulfilling the goal of comparing parameter influence. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <title>储能系统LCOS计算器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'SimHei', sans-serif;
+            background-color: #f5f5f4; /* stone-100 */
+        }
+        .card {
+            background-color: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            padding: 1.5rem;
+        }
+        .file-input-label {
+            cursor: pointer;
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background-color: #0d9488; /* teal-600 */
+            color: white;
+            border-radius: 0.375rem; /* rounded-md */
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        .file-input-label:hover {
+            background-color: #0f766e; /* teal-700 */
+        }
+        .file-input-hidden {
+            display: none;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            height: 450px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+</head>
+<body class="text-stone-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-stone-900">储能系统LCOS计算器</h1>
+            <p class="text-stone-600 mt-2">一个用于计算和分析储能系统度电成本的交互式工具</p>
+        </header>
+
+        <div class="space-y-6">
+            <div class="card">
+                <h2 class="text-xl font-semibold mb-3 text-stone-700">通过文件升级模板</h2>
+                <div class="flex items-center gap-4">
+                     <input type="file" id="py-upload" accept=".py" class="file-input-hidden">
+                     <label for="py-upload" class="file-input-label">选择 .py 文件</label>
+                     <span id="upload-status" class="text-sm text-stone-500">请上传包含 'battery_types' 变量的 Python 文件。</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="text-xl font-semibold mb-3 text-stone-700">1. 选择预设参数模板</h2>
+                <div id="battery-type-buttons" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 card">
+                    <h2 class="text-xl font-semibold mb-4 text-stone-700">2. 输入参数</h2>
+                    <div id="input-area" class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4"></div>
+                </div>
+
+                <div class="lg:col-span-1 row-start-1 lg:row-auto">
+                    <div class="card sticky top-8">
+                        <h2 class="text-xl font-semibold mb-4 text-stone-700">4. 计算结果</h2>
+                        <div id="result-area" class="bg-stone-100 p-4 rounded-md min-h-[200px] text-stone-700 leading-relaxed text-sm">
+                            LCOS计算结果将显示在这里
+                        </div>
+                    </div>
+                </div>
+
+                 <div class="lg:col-span-3 card">
+                    <h2 class="text-xl font-semibold mb-4 text-stone-700">3. 执行与分析</h2>
+                    <div class="flex flex-wrap items-center gap-4 mb-6">
+                        <button id="btn-calc" class="bg-teal-600 text-white font-semibold py-2 px-5 rounded-lg hover:bg-teal-700 transition-colors shadow">计算LCOS</button>
+                        <button id="btn-analyze" class="bg-sky-600 text-white font-semibold py-2 px-5 rounded-lg hover:bg-sky-700 transition-colors shadow">梯度敏感性分析</button>
+                        <button id="btn-clear" class="bg-stone-500 text-white font-semibold py-2 px-5 rounded-lg hover:bg-stone-600 transition-colors shadow">清除结果</button>
+                    </div>
+
+                    <div id="param-selection-area" class="mt-4">
+                        <h3 class="text-lg font-medium mb-2 text-stone-700">敏感性分析参数选择</h3>
+                        <div id="param-checkboxes" class="flex flex-wrap gap-x-6 gap-y-2 text-sm"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="sensitivity-modal" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-full overflow-y-auto p-6">
+                 <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-stone-800">敏感性分析结果</h2>
+                    <button id="close-modal-btn" class="text-stone-500 hover:text-stone-800 text-3xl">&times;</button>
+                 </div>
+                 <div id="sensitivity-results-content" class="space-y-6"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            let batteryTypes = [
+                { name: "液流电池（参考星辰新能2024）", params: { 'eta_rte': 0.67, 'eta_d': 0.7, 'p_c': 0, 'r': 0.07, 'T': 20, 'electrolyte_cost': 840, 'capacity_bop_cost': 300, 'stack_cost': 2200, 'power_bop_cost': 1200, 'd': 4, 'avg_cycles': 330, 'om_rate': 0.01 } },
+                { name: "液流电池（参考星辰新能2025）", params: { 'eta_rte': 0.67, 'eta_d': 0.7, 'p_c': 0, 'r': 0.07, 'T': 20, 'electrolyte_cost': 700, 'capacity_bop_cost': 275, 'stack_cost': 1600, 'power_bop_cost': 1100, 'd': 4, 'avg_cycles': 330, 'om_rate': 0.01 } },
+                { name: "液流电池（对标中和储能）", params: { 'eta_rte': 0.776, 'eta_d': 0.884, 'p_c': 0, 'r': 0.07, 'T': 30, 'electrolyte_cost': 863, 'capacity_bop_cost': 0, 'stack_cost': 1746, 'power_bop_cost': 0, 'd': 4, 'avg_cycles': 365, 'om_rate': 0.03 } },
+                { name: "锂电池（对标中和储能）", params: { 'eta_rte': 0.85, 'eta_d': 0.922, 'p_c': 0, 'r': 0.07, 'T': 10, 'electrolyte_cost': 1080, 'capacity_bop_cost': 0, 'stack_cost': 350, 'power_bop_cost': 0, 'd': 2, 'avg_cycles': 365, 'om_rate': 0.03 } }
+            ];
+
+            const parameters = [
+                { key: 'eta_rte', label: "η_RTE (AC-AC循环效率, 0-1):", default: "0.67", min: "0.6", max: "0.7" }, { key: 'eta_d', label: "η_D (放电深度, 0-1):", default: "0.7", min: "0.6", max: "0.9" }, { key: 'p_c', label: "P_c (充电电价, 元/kWh):", default: "0.1", min: "0.1", max: "0.4" }, { key: 'r', label: "r (折现率, 小数):", default: "0.07", min: "0.05", max: "0.08" }, { key: 'T', label: "T (系统寿命, 年):", default: "20", min: "5", max: "20" }, { key: 'electrolyte_cost', label: "电解液成本 (元/kWh):", default: "840", min: "525", max: "1200" }, { key: 'capacity_bop_cost', label: "容量BOP成本 (元/kWh):", default: "300", min: "200", max: "300" }, { key: 'stack_cost', label: "电堆成本 (元/kW):", default: "2200", min: "1000", max: "2200" }, { key: 'power_bop_cost', label: "功率BOP成本 (元/kW):", default: "1200", min: "800", max: "1200" }, { key: 'd', label: "d (放电时长, 小时):", default: "4", min: "2", max: "10" }, { key: 'avg_cycles', label: "n (年循环次数):", default: "330", min: "200", max: "660" }, { key: 'om_rate', label: "O&M_rate (运维费率, 小数):", default: "0.01", min: "0.001", max: "0.03" }
+            ];
+            
+            const paramChineseNames = { 'eta_rte': 'AC-AC循环效率', 'eta_d': '放电深度', 'p_c': '充电电价', 'r': '折现率', 'T': '系统寿命', 'electrolyte_cost': '电解液成本', 'capacity_bop_cost': '容量BOP成本', 'stack_cost': '电堆成本', 'power_bop_cost': '功率BOP成本', 'd': '放电时长', 'avg_cycles': '年循环次数', 'om_rate': '运维费率' };
+
+            const DOMElements = { batteryButtonsContainer: document.getElementById('battery-type-buttons'), inputArea: document.getElementById('input-area'), resultArea: document.getElementById('result-area'), paramCheckboxesContainer: document.getElementById('param-checkboxes'), btnCalc: document.getElementById('btn-calc'), btnAnalyze: document.getElementById('btn-analyze'), btnClear: document.getElementById('btn-clear'), sensitivityModal: document.getElementById('sensitivity-modal'), closeModalBtn: document.getElementById('close-modal-btn'), sensitivityResultsContent: document.getElementById('sensitivity-results-content'), pyUpload: document.getElementById('py-upload'), uploadStatus: document.getElementById('upload-status') };
+            let sensitivityChart = null;
+
+            function createBatteryButtons(types) {
+                DOMElements.batteryButtonsContainer.innerHTML = '';
+                types.forEach(type => {
+                    const btn = document.createElement('button');
+                    btn.textContent = type.name;
+                    btn.className = 'px-3 py-1.5 text-sm font-medium text-white bg-teal-500 rounded-md hover:bg-teal-600 transition-colors';
+                    btn.onclick = () => setInputValues(type.params);
+                    DOMElements.batteryButtonsContainer.appendChild(btn);
+                });
+            }
+
+            function initializeUI() {
+                createBatteryButtons(batteryTypes);
+                parameters.forEach(param => {
+                    const inputGroup = document.createElement('div');
+                    inputGroup.className = 'flex flex-col space-y-1';
+                    inputGroup.innerHTML = `<label for="${param.key}" class="text-sm font-medium text-stone-600">${param.label}</label><div class="flex items-center space-x-2"><input type="number" id="${param.key}" step="any" value="${param.default}" class="w-24 p-1.5 border border-stone-300 rounded-md shadow-sm focus:ring-teal-500 focus:border-teal-500 text-sm"><span class="text-xs text-stone-500">Min:</span><input type="number" id="${param.key}-min" step="any" value="${param.min}" class="w-20 p-1.5 border border-stone-300 rounded-md shadow-sm focus:ring-teal-500 focus:border-teal-500 text-sm"><span class="text-xs text-stone-500">Max:</span><input type="number" id="${param.key}-max" step="any" value="${param.max}" class="w-20 p-1.5 border border-stone-300 rounded-md shadow-sm focus:ring-teal-500 focus:border-teal-500 text-sm"></div>`;
+                    DOMElements.inputArea.appendChild(inputGroup);
+                    const checkboxGroup = document.createElement('div');
+                    checkboxGroup.className = 'flex items-center';
+                    checkboxGroup.innerHTML = `<input type="checkbox" id="cb-${param.key}" name="param-select" value="${param.key}" checked class="h-4 w-4 text-teal-600 border-stone-300 rounded focus:ring-teal-500"><label for="cb-${param.key}" class="ml-2 text-stone-700">${paramChineseNames[param.key]}</label>`;
+                    DOMElements.paramCheckboxesContainer.appendChild(checkboxGroup);
+                });
+            }
+
+            function setInputValues(params) {
+                for (const key in params) {
+                    const entry = document.getElementById(key);
+                    if (entry) entry.value = params[key];
+                }
+                clearResults();
+            }
+
+            function getInputValues() {
+                try {
+                    const values = {}, ranges = {};
+                    for(const param of parameters) {
+                        const val = parseFloat(document.getElementById(param.key).value);
+                        const minVal = parseFloat(document.getElementById(`${param.key}-min`).value);
+                        const maxVal = parseFloat(document.getElementById(`${param.key}-max`).value);
+                        if (isNaN(val) || isNaN(minVal) || isNaN(maxVal)) throw new Error(`参数 ${param.label} 无效`);
+                        values[param.key] = val;
+                        ranges[param.key] = [minVal, maxVal];
+                    }
+                    return { values, ranges };
+                } catch (error) {
+                    alert(`输入错误: ${error.message}`);
+                    return null;
+                }
+            }
+            
+            function calculateLCOS(p) {
+                const inputs = p ? p : (getInputValues()?.values);
+                if (!inputs) return null;
+                const T = parseInt(inputs.T);
+                let total_cycles_pv = 0;
+                for (let t = 1; t <= T; t++) total_cycles_pv += inputs.avg_cycles / Math.pow(1 + inputs.r, t);
+                const capital_cost = (inputs.electrolyte_cost / inputs.eta_d) + (inputs.capacity_bop_cost / inputs.eta_d) + (inputs.stack_cost / inputs.d) + (inputs.power_bop_cost / inputs.d);
+                let om_cost_pv = 0;
+                for (let t = 1; t <= T; t++) om_cost_pv += (inputs.om_rate * capital_cost) / Math.pow(1 + inputs.r, t);
+                const inefficiency_cost = (1 / inputs.eta_rte - 1) * inputs.p_c * total_cycles_pv;
+                const lcos = (inefficiency_cost + om_cost_pv + capital_cost) / total_cycles_pv;
+                if (!p) {
+                    const e_cost = inputs.electrolyte_cost / inputs.eta_d, s_cost = inputs.stack_cost / inputs.d, p_bop = inputs.power_bop_cost / inputs.d, c_bop = inputs.capacity_bop_cost;
+                    const bop_cost = p_bop + c_bop, total_install = e_cost + s_cost + bop_cost;
+                    DOMElements.resultArea.innerHTML = `<div class="font-bold text-lg mb-2">LCOS: <span class="text-teal-600">${lcos.toFixed(3)} 元/度</span></div><div class="space-y-1"><div><strong>单位装机成本:</strong> ${total_install.toFixed(0)} 元/kWh</div><div><strong>电解液成本:</strong> ${e_cost.toFixed(0)} 元/kWh, 占比 ${(e_cost/total_install*100).toFixed(1)}%</div><div><strong>电堆成本:</strong> ${s_cost.toFixed(0)} 元/kWh, 占比 ${(s_cost/total_install*100).toFixed(1)}%</div><div><strong>BOP成本:</strong> ${bop_cost.toFixed(0)} 元/kWh, 占比 ${(bop_cost/total_install*100).toFixed(1)}%</div></div>`;
+                }
+                return lcos;
+            }
+
+            function runGradientAnalysis() {
+                const data = getInputValues();
+                if (!data) return;
+                const { values: inputs, ranges } = data;
+                const selectedParams = Array.from(document.querySelectorAll('input[name="param-select"]:checked')).map(cb => cb.value);
+                if (selectedParams.length === 0) { alert("参数选择: 请至少选择一个参数进行敏感性分析。"); return; }
+                const epsilon = 1e-6, gradients = {};
+                selectedParams.forEach(key => {
+                    const originalValue = inputs[key];
+                    const lcosPlus = calculateLCOS({ ...inputs, [key]: originalValue + epsilon });
+                    const lcosMinus = calculateLCOS({ ...inputs, [key]: originalValue - epsilon });
+                    gradients[key] = (lcosPlus - lcosMinus) / (2 * epsilon);
+                });
+                const maxAbsGrad = Math.max(...Object.values(gradients).map(g => Math.abs(g)));
+                const sensitivityIndices = {};
+                for (const key in gradients) sensitivityIndices[key] = maxAbsGrad > 0 ? gradients[key] / maxAbsGrad : 0;
+                let minLcos = calculateLCOS(inputs), minParams = { ...inputs };
+                selectedParams.forEach(key => {
+                    const lcosAtMin = calculateLCOS({ ...minParams, [key]: ranges[key][0] });
+                    if (lcosAtMin < minLcos) { minLcos = lcosAtMin; minParams[key] = ranges[key][0]; }
+                    const lcosAtMax = calculateLCOS({ ...minParams, [key]: ranges[key][1] });
+                    if (lcosAtMax < minLcos) { minLcos = lcosAtMax; minParams[key] = ranges[key][1]; }
+                });
+                displaySensitivityResults(sensitivityIndices, minLcos, minParams, selectedParams);
+            }
+
+            function displaySensitivityResults(sensitivity, minLcos, minParams, selectedParams) {
+                const sortedParams = Object.entries(sensitivity).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+                const percentParams = new Set(['eta_rte', 'eta_d', 'r', 'om_rate']);
+                let minParamsHTML = '<div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-sm">';
+                selectedParams.forEach(key => { let v = percentParams.has(key) ? `${(minParams[key] * 100).toFixed(1)}%` : (key === 'p_c' ? `${minParams[key].toFixed(3)}` : `${Math.round(minParams[key])}`); minParamsHTML += `<div><strong>${paramChineseNames[key]}:</strong> <span class="font-mono">${v}</span></div>`; });
+                minParamsHTML += '</div>';
+                DOMElements.sensitivityResultsContent.innerHTML = `<div class="p-4 bg-stone-100 rounded-lg"><h3 class="font-bold text-lg">LCOS最小值</h3><p>在给定参数范围内，LCOS的理论最小值为: <strong class="text-sky-600 text-xl">${minLcos.toFixed(3)} 元/度</strong></p><p class="text-sm text-stone-600 mt-2">达到此最小值时的参数值:</p>${minParamsHTML}</div><div class="p-4 bg-stone-100 rounded-lg"><h3 class="font-bold text-lg">参数敏感性排序 (归一化指数)</h3><p class="text-sm text-stone-600 mb-3">红色表示正相关（参数增大，LCOS增大），蓝色表示负相关。</p><div class="chart-container"><canvas id="sensitivityChart"></canvas></div></div>`;
+                DOMElements.sensitivityModal.classList.remove('hidden'); DOMElements.sensitivityModal.classList.add('flex');
+                
+                if (sensitivityChart) sensitivityChart.destroy();
+                const ctx = document.getElementById('sensitivityChart').getContext('2d');
+                sensitivityChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: sortedParams.map(([key, _]) => paramChineseNames[key]),
+                        datasets: [{ label: '归一化敏感性指数', data: sortedParams.map(([_, value]) => value), backgroundColor: sortedParams.map(([_, value]) => value >= 0 ? 'rgba(239, 68, 68, 0.7)' : 'rgba(59, 130, 246, 0.7)'), borderColor: sortedParams.map(([_, value]) => value >= 0 ? 'rgba(239, 68, 68, 1)' : 'rgba(59, 130, 246, 1)'), borderWidth: 1 }]
+                    },
+                    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.raw.toFixed(4)}` } } }, scales: { x: { title: { display: true, text: '归一化敏感性指数' } }, y: { ticks: { autoSkip: false } } } }
+                });
+            }
+
+            function clearResults() { DOMElements.resultArea.textContent = 'LCOS计算结果将显示在这里'; }
+
+            function handleFileUpload(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const content = e.target.result;
+                    try {
+                        const newTypes = parsePythonBatteryTypes(content);
+                        if (newTypes.length === 0) throw new Error("在文件中未找到或未能解析 'battery_types' 变量。");
+                        batteryTypes = newTypes;
+                        createBatteryButtons(batteryTypes);
+                        DOMElements.uploadStatus.textContent = `成功加载 ${file.name} 中的 ${newTypes.length} 个模板！`;
+                        DOMElements.uploadStatus.className = 'text-sm text-green-600';
+                    } catch (error) {
+                        DOMElements.uploadStatus.textContent = `文件解析失败: ${error.message}`;
+                        DOMElements.uploadStatus.className = 'text-sm text-red-600';
+                    }
+                };
+                reader.onerror = () => {
+                    DOMElements.uploadStatus.textContent = "读取文件时出错。";
+                    DOMElements.uploadStatus.className = 'text-sm text-red-600';
+                };
+                reader.readAsText(file);
+            }
+
+            function parsePythonBatteryTypes(text) {
+                const match = text.match(/battery_types\s*=\s*\[([\s\S]*?)\]/);
+                if (!match) return [];
+                let pyString = match[1];
+                let jsonString = pyString
+                    .replace(/#.*$/gm, '') // Remove comments
+                    .replace(/\s/g, '') // Remove all whitespace
+                    .replace(/\(/g, '[') // Tuples to arrays
+                    .replace(/\)/g, ']') // Tuples to arrays
+                    .replace(/'/g, '"') // Single to double quotes
+                    .replace(/,\]/g, ']') // Trailing commas in arrays
+                    .replace(/,\}/g, '}'); // Trailing commas in objects
+                
+                const data = JSON.parse(`[${jsonString}]`);
+                return data.map(item => ({ name: item[0], params: item[1] }));
+            }
+
+            DOMElements.btnCalc.addEventListener('click', () => calculateLCOS(null));
+            DOMElements.btnAnalyze.addEventListener('click', runGradientAnalysis);
+            DOMElements.btnClear.addEventListener('click', clearResults);
+            DOMElements.closeModalBtn.addEventListener('click', () => { DOMElements.sensitivityModal.classList.add('hidden'); DOMElements.sensitivityModal.classList.remove('flex'); });
+            DOMElements.sensitivityModal.addEventListener('click', (e) => { if (e.target === DOMElements.sensitivityModal) { DOMElements.sensitivityModal.classList.add('hidden'); DOMElements.sensitivityModal.classList.remove('flex'); } });
+            DOMElements.pyUpload.addEventListener('change', handleFileUpload);
+            
+            initializeUI();
+            if (batteryTypes.length > 0) setInputValues(batteryTypes[0].params);
+        });
+    </script>
+
+</body>
+</html>
